@@ -1,0 +1,153 @@
+package com.aegisdev.ktreesitter.editor.widget
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Typeface
+import android.text.Editable
+import android.util.AttributeSet
+import android.util.Log
+import android.view.KeyEvent
+import android.view.MotionEvent
+import com.aegisdev.ktreesitter.editor.plugin.base.EditorPlugin
+import com.aegisdev.ktreesitter.editor.plugin.base.PluginContainer
+import com.aegisdev.ktreesitter.editor.plugin.base.PluginSupplier
+import com.aegisdev.ktreesitter.editor.widget.internal.SyntaxHighlightEditText
+
+open class TextProcessor @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = android.R.attr.autoCompleteTextViewStyle,
+) : SyntaxHighlightEditText(context, attrs, defStyleAttr), PluginContainer {
+
+    companion object { private const val TAG = "TextProcessor" }
+
+    private val plugins = hashSetOf<EditorPlugin>()
+    private var internalFreezesText = true
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        for (plugin in plugins) { plugin.onMeasure(widthMeasureSpec, heightMeasureSpec) }
+    }
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        for (plugin in plugins) { plugin.onLayout(changed, left, top, right, bottom) }
+    }
+    override fun onDraw(canvas: Canvas) {
+        for (plugin in plugins) { plugin.drawBehind(canvas) }
+        super.onDraw(canvas)
+        for (plugin in plugins) { plugin.onDraw(canvas) }
+    }
+    override fun getFreezesText(): Boolean = internalFreezesText
+    override fun setFreezesText(freezesText: Boolean) {
+        super.setFreezesText(freezesText)
+        internalFreezesText = freezesText
+    }
+    override fun onColorSchemeChanged() {
+        super.onColorSchemeChanged()
+        for (plugin in plugins) { plugin.onColorSchemeChanged(colorScheme) }
+    }
+    override fun onLanguageChanged() {
+        super.onLanguageChanged()
+        for (plugin in plugins) { plugin.onLanguageChanged(language) }
+    }
+    override fun onScrollChanged(horiz: Int, vert: Int, oldHoriz: Int, oldVert: Int) {
+        super.onScrollChanged(horiz, vert, oldHoriz, oldVert)
+        for (plugin in plugins) { plugin.onScrollChanged(horiz, vert, oldHoriz, oldVert) }
+    }
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        for (plugin in plugins) { plugin.onSizeChanged(w, h, oldw, oldh) }
+    }
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        if (layout != null) {
+            for (plugin in plugins) { plugin.onSelectionChanged(selStart, selEnd) }
+        }
+    }
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        for (plugin in plugins) { if (plugin.onTouchEvent(event)) return true }
+        return super.onTouchEvent(event)
+    }
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        for (plugin in plugins) { if (plugin.onKeyUp(keyCode, event)) return true }
+        return super.onKeyUp(keyCode, event)
+    }
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        for (plugin in plugins) { if (plugin.onKeyDown(keyCode, event)) return true }
+        return super.onKeyDown(keyCode, event)
+    }
+    override fun doBeforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) {
+        super.doBeforeTextChanged(text, start, count, after)
+        for (plugin in plugins) { plugin.beforeTextChanged(text, start, count, after) }
+    }
+    override fun doOnTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+        super.doOnTextChanged(text, start, before, count)
+        for (plugin in plugins) { plugin.onTextChanged(text, start, before, count) }
+    }
+    override fun doAfterTextChanged(text: Editable?) {
+        super.doAfterTextChanged(text)
+        for (plugin in plugins) { plugin.afterTextChanged(text) }
+    }
+    override fun processLine(lineNumber: Int, lineStart: Int, lineEnd: Int) {
+        super.processLine(lineNumber, lineStart, lineEnd)
+        for (plugin in plugins) { plugin.processLine(lineNumber, lineStart, lineEnd) }
+    }
+    override fun addLine(lineNumber: Int, lineStart: Int) {
+        super.addLine(lineNumber, lineStart)
+        for (plugin in plugins) { plugin.addLine(lineNumber, lineStart) }
+    }
+    override fun removeLine(lineNumber: Int) {
+        super.removeLine(lineNumber)
+        for (plugin in plugins) { plugin.removeLine(lineNumber) }
+    }
+    override fun setTextContent(text: CharSequence) {
+        super.setTextContent(text)
+        for (plugin in plugins) { plugin.setTextContent(text) }
+    }
+    override fun setTextSize(size: Float) {
+        super.setTextSize(size)
+        if (layout != null) {
+            for (plugin in plugins) { plugin.setTextSize(size) }
+        }
+    }
+    override fun setTypeface(tf: Typeface?) {
+        super.setTypeface(tf)
+        if (layout != null) {
+            for (plugin in plugins) { plugin.setTypeface(tf) }
+        }
+    }
+    override fun showDropDown() {
+        super.showDropDown()
+        for (plugin in plugins) { plugin.showDropDown() }
+    }
+    override fun plugins(supplier: PluginSupplier) {
+        val allPlugins = plugins union supplier.supply()
+        val crossPlugins = allPlugins intersect supplier.supply()
+        val disjointPlugins = allPlugins subtract crossPlugins
+        for (plugin in disjointPlugins) { uninstallPlugin(plugin.pluginId) }
+        for (plugin in supplier.supply()) { installPlugin(plugin) }
+    }
+    override fun <T : EditorPlugin> installPlugin(plugin: T) {
+        if (!hasPlugin(plugin.pluginId)) {
+            plugins.add(plugin)
+            plugin.onAttached(this)
+        } else {
+            Log.e(TAG, "Plugin $plugin is already attached.")
+        }
+    }
+    override fun uninstallPlugin(pluginId: String) {
+        if (hasPlugin(pluginId)) {
+            findPlugin<EditorPlugin>(pluginId)?.let { plugin ->
+                plugins.remove(plugin)
+                plugin.onDetached(this)
+            }
+        } else {
+            Log.e(TAG, "Plugin $pluginId is not attached.")
+        }
+    }
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : EditorPlugin> findPlugin(pluginId: String): T? = plugins.find { it.pluginId == pluginId } as? T
+    override fun hasPlugin(pluginId: String): Boolean = plugins.any { it.pluginId == pluginId }
+}
